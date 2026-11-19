@@ -65,10 +65,7 @@ def project(points, rotation, translation, camera):
 
 def calibrate(grids, size, pitch):
     """Square pixels, principal point fixed at image center, zero distortion."""
-    world = [np.column_stack([cells[:, 0] * pitch, -cells[:, 1] * pitch,
-                              np.zeros(len(cells))]).astype(np.float32) for cells, _ in grids]
-    observed = [pixels.astype(np.float32) for _, pixels in grids]
-    holdout = [(cells[:, 0] + 2 * cells[:, 1]) % 5 == 0 for cells, _ in grids]
+    world, observed, holdout = zip(*(split_grid(grid, pitch) for grid in grids))
     width, height = size
     matrix = np.array([[width * 1.3, 0, (width - 1) / 2],
                        [0, width * 1.3, (height - 1) / 2], [0, 0, 1]])
@@ -81,17 +78,37 @@ def calibrate(grids, size, pitch):
         (width, height), matrix, None, flags=flags)
     if not width * 0.35 < matrix[0, 0] < width * 4:
         raise ValueError("Focal length is poorly constrained by these views")
-    poses = []
-    for xyz, pixels, hold, rvec, tvec in zip(world, observed, holdout, rotations, translations):
-        fitted = project(xyz, rvec, tvec, matrix)
-        errors = np.linalg.norm(pixels - fitted, axis=1)
-        if hold.sum() < 5 or np.sqrt(np.mean(errors[hold] ** 2)) > 4:
-            raise ValueError("Insufficient grid coverage or held-out grid RMS exceeds 4 px")
-        rotation, _ = cv2.Rodrigues(rvec)
-        if (-rotation.T @ tvec)[2, 0] <= 0:
-            raise ValueError("Camera is below the mat. Check grid corner order")
-        poses.append((rotation, tvec.ravel(), fitted, hold, errors))
+    poses = [checked_pose(xyz, pixels, hold, rvec, tvec, matrix)
+             for xyz, pixels, hold, rvec, tvec in zip(world, observed, holdout, rotations, translations)]
     return matrix, poses
+
+
+def split_grid(grid, pitch):
+    cells, pixels = grid
+    world = np.column_stack([cells[:, 0] * pitch, -cells[:, 1] * pitch,
+                             np.zeros(len(cells))]).astype(np.float32)
+    hold = (cells[:, 0] + 2 * cells[:, 1]) % 5 == 0
+    return world, pixels.astype(np.float32), hold
+
+
+def checked_pose(world, pixels, hold, rvec, tvec, matrix):
+    fitted = project(world, rvec, tvec, matrix)
+    errors = np.linalg.norm(pixels - fitted, axis=1)
+    if hold.sum() < 5 or np.sqrt(np.mean(errors[hold] ** 2)) > 4:
+        raise ValueError("Insufficient grid coverage or held-out grid RMS exceeds 4 px")
+    rotation, _ = cv2.Rodrigues(rvec)
+    if (-rotation.T @ tvec)[2, 0] <= 0:
+        raise ValueError("Camera is below the mat. Check grid corner order")
+    return rotation, tvec.ravel(), fitted, hold, errors
+
+
+def fit_mat_pose(grid, pitch, camera):
+    """Estimate extrinsics for a new view without re-fitting the shared focal length."""
+    world, pixels, hold = split_grid(grid, pitch)
+    ok, rvec, tvec = cv2.solvePnP(world[~hold], pixels[~hold], camera, None)
+    if not ok:
+        raise ValueError("Unable to place the mat in the additional view")
+    return checked_pose(world, pixels, hold, rvec, tvec, camera)
 
 
 def mat_points(pixels, camera, rotation, translation):

@@ -1,6 +1,6 @@
 # ISE MOUNT Pump Spray 80 ml — parametric CAD reconstruction
 
-Source-based CAD reconstruction of the 80 ml spray bottle from seven user-provided photos. **Visual prototype, not calibrated mechanical geometry**.
+Parametric visual reconstruction of the 80 ml spray bottle. The current model includes a drafted shoulder, a tapered through-handle, a recessed foot, a ribbed cap and a raised rear capacity mark. Dimensions are estimates using a nominal 10 mm mat pitch.
 
 ![Illustrative project sketch](docs/preview.svg)
 
@@ -49,13 +49,17 @@ corners of a known grid rectangle in each image, excludes the bottle and
 shadow from grid detection, and records the image positions of the bottom
 edge and pump top. The program refines grid intersections from the JPEGs,
 fits a pinhole camera, and checks reprojection on held-out intersections.
-The bottom edge sets XY and yaw with the bottle upright, using the CAD
-footprint for the offset from edge to center. The annotated pump top is a
+The bottom edge sets XY and yaw using the CAD footprint for the offset
+from edge to center. The optional front-up photo uses the shared focal
+length, a separate mat pose, and the front bottom edge at a height estimated
+from the bottle depth. The annotated pump top is a
 separate reprojection check. The CAD dimensions are held fixed across views.
 
 ```bash
 python src/model.py --out out
 python src/visual_validate.py --photos refs/photos --cad out --out out/visual
+# Also compare the front-up photo (1000048546.jpg).
+python src/visual_validate.py --photos refs/photos --cad out --out out/visual --include-flat
 ```
 
 The report `out/visual/comparison.html` is self-contained and shows the

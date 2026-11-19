@@ -14,6 +14,18 @@ def test_brep():
     assert len(parts["pump"].solids().vals())==1
     assert 50<DIM["body_width"]<100
 
+def test_handle_passage_and_base_recess():
+    body = build_parts()["body"].val()
+    x = DIM["loop_opening_center_x"]
+    z = DIM["loop_opening_bottom_z"] + DIM["loop_opening_height"] / 2
+    assert not body.isInside((x, 0, z))
+    assert body.isInside((x + DIM["loop_opening_width"] / 2 + 1.5, 0, z))
+    base_x = DIM["body_center_x"]
+    recess_z = DIM["base_recess_depth"] / 2
+    assert not body.isInside((base_x, 0, recess_z))
+    assert body.isInside((base_x, DIM["body_depth"] / 2 - DIM["body_edge_radius"] - 1.0, recess_z))
+
+
 def test_stl():
     for name in ("body","pump","silhouette"):
         mesh=trimesh.load(str(ROOT/"out"/(name+".stl")),force="mesh")

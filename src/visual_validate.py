@@ -1,4 +1,4 @@
-"""Register upright bottle views, render in their cameras, and report unscaled errors."""
+"""Register bottle views, render in their cameras, and report unscaled errors."""
 
 import argparse
 import base64
@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from calibrate_camera import calibrate, detect_grid, mat_points, project
+from calibrate_camera import calibrate, detect_grid, fit_mat_pose, mat_points, project
 from model import DIM
 from render_perspective import load_parts, render
 
@@ -35,7 +35,7 @@ def bottle_pose(view, camera, mat_rotation, mat_translation):
     cosine, sine = np.cos(yaw), np.sin(yaw)
     rotation = np.array([[cosine, -sine, 0], [sine, cosine, 0], [0, 0, 1]])
     radius = DIM["body_edge_radius"]
-    # A fully filleted box contacts the plane on its inset flat footprint.
+    # The bottom face contacts the mat on its inset footprint.
     offset = np.array(face) * (np.array([DIM["body_width"], DIM["body_depth"]]) / 2 - radius)
     origin = np.r_[edge.mean(axis=0) - rotation[:2, :2] @ offset, 0]
     return (
@@ -45,6 +45,28 @@ def bottle_pose(view, camera, mat_rotation, mat_translation):
          "observed_edge_span_mm": float(span),
          "cad_flat_edge_span_mm": DIM[f"body_{along}"] - 2 * radius},
     )
+
+
+def flat_bottle_pose(view, camera, mat_rotation, mat_translation):
+    """Place a front-up bottle using the visible bottom edge, elevated above the mat."""
+    depth = DIM["body_depth"]
+    edge_height = depth - DIM["body_edge_radius"]
+    pixels = np.asarray(view["base_edge_px"], dtype=float)
+    edge = mat_points(pixels, camera, mat_rotation,
+                      mat_translation + mat_rotation[:, 2] * edge_height)
+    direction = edge[1] - edge[0]
+    span = np.linalg.norm(direction)
+    if span < 1:
+        raise ValueError("Degenerate bottom edge in flat view")
+    yaw = np.arctan2(direction[1], direction[0]) + np.pi / 2
+    c, s = np.cos(yaw), np.sin(yaw)
+    rotations = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    front_up = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])
+    origin = np.r_[edge.mean(axis=0), depth / 2]
+    return (mat_rotation @ rotations @ front_up,
+            mat_rotation @ origin + mat_translation,
+            {"base_xy_mm": origin[:2].tolist(), "yaw_deg": float(np.degrees(yaw)),
+             "observed_edge_span_mm": float(span), "assumed_edge_height_mm": edge_height})
 
 
 def photo_mask(image, roi, opening_roi):
@@ -125,9 +147,11 @@ def diagnostics(directory, photo, color, observed, ids, pixels, fitted, holdout,
 
 def run(args):
     config = json.loads(args.manifest.read_text())
-    views = config["views"]
+    upright = config["views"]
+    flat = config.get("flat_views", []) if args.include_flat else []
+    views = upright + flat
     pitch = args.grid_pitch_mm if args.grid_pitch_mm is not None else config["grid_pitch_mm"]
-    if not np.isfinite(pitch) or pitch <= 0 or len(views) < 3:
+    if not np.isfinite(pitch) or pitch <= 0 or len(upright) < 3:
         raise ValueError("A positive grid pitch and at least three views are required")
     size = config["image_size"]
     names = [v["name"] for v in views]
@@ -143,22 +167,25 @@ def run(args):
             raise ValueError(f"{path}: expected {size[0]}×{size[1]} pixels")
         photos.append(image)
     grids = [detect_grid(photo, view) for photo, view in zip(photos, views)]
-    camera, poses = calibrate(grids, size, pitch)
+    camera, poses = calibrate(grids[:len(upright)], size, pitch)
+    poses.extend(fit_mat_pose(grid, pitch, camera) for grid in grids[len(upright):])
+    pose_functions = [bottle_pose] * len(upright) + [flat_bottle_pose] * len(flat)
     parts = load_parts(args.cad)
     args.out.mkdir(parents=True, exist_ok=True)
     report = {"intrinsics": camera.tolist(), "grid_pitch_mm": pitch,
               "grid_pitch_measured": args.grid_pitch_mm is not None or config["grid_pitch_measured"],
               "camera_model": "shared focal length, square pixels, centered principal point, no distortion",
-              "object_pose": "upright, base on mat, yaw and XY from annotated base edge",
+              "object_pose": "yaw and XY from annotated bottom edge",
               "views": []}
-    for view, photo, (_, pixels), (mat_r, mat_t, fitted, hold, err) in zip(views, photos, grids, poses):
-        rotation, translation, pose = bottle_pose(view, camera, mat_r, mat_t)
+    for view, photo, (_, pixels), (mat_r, mat_t, fitted, hold, err), pose_function in zip(
+            views, photos, grids, poses, pose_functions):
+        rotation, translation, pose = pose_function(view, camera, mat_r, mat_t)
         color, ids, depth = render(parts, camera, rotation, translation, size)
         observed = photo_mask(photo, view["object_roi_px"], view.get("opening_roi_px"))
         metrics = compare(observed, ids != 0)
         pump_observed = np.asarray(view["pump_top_px"])
         pump_model_z = parts["pump"].bounds[1, 2]
-        pump_top = project([[DIM["nozzle_center_x"], 0, pump_model_z]],
+        pump_top = project([[DIM["nozzle_center_x"], DIM.get("nozzle_center_y", 0), pump_model_z]],
                            cv2.Rodrigues(rotation)[0], translation, camera)[0]
         directory = args.out / view["name"]
         directory.mkdir(exist_ok=True)
@@ -172,6 +199,7 @@ def run(args):
                   **metrics, "pump_top_error_px": float(np.linalg.norm(pump_observed - pump_top)),
                   "mat_to_camera": {"rotation": mat_r.tolist(), "translation_mm": mat_t.tolist()},
                   "object_to_camera": {"rotation": rotation.tolist(), "translation_mm": translation.tolist()},
+                  "orientation": "front-up" if pose_function is flat_bottle_pose else "upright",
                   "pose": pose}
         report["views"].append(result)
         print(f"{view['name']}: grid RMS {result['grid_holdout_rms_px']:.2f} px, "
@@ -233,6 +261,8 @@ def main():
     parser.add_argument("--cad", type=Path, default=ROOT / "out")
     parser.add_argument("--out", type=Path, default=ROOT / "out/visual")
     parser.add_argument("--grid-pitch-mm", type=float, help="Measured pitch, overriding manifest value")
+    parser.add_argument("--include-flat", action="store_true",
+                        help="Also check the front-up photo with the upright views' focal length")
     parser.add_argument("--min-iou", type=float, help="Optional minimum IoU for every view")
     args = parser.parse_args()
     if args.min_iou is not None and not 0 < args.min_iou <= 1:
