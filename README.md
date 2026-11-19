@@ -40,3 +40,43 @@ For an accurate comparison: measure some bottle dimensions, place ChArUco or Apr
 ## Printability and safety
 
 Main body and pump are separate visual solids, not a usable threaded cap or sealed reservoir. Do not use as a fluid container for alcohol/fuel or print a fitted part without physical measurements.
+
+## Perspective visual validation
+
+The upright front, rear and side photos use separately fitted mat and bottle
+poses and a shared focal length. The manifest identifies four approximate
+corners of a known grid rectangle in each image, excludes the bottle and
+shadow from grid detection, and records the image positions of the bottom
+edge and pump top. The program refines grid intersections from the JPEGs,
+fits a pinhole camera, and checks reprojection on held-out intersections.
+The bottom edge sets XY and yaw with the bottle upright, using the CAD
+footprint for the offset from edge to center. The annotated pump top is a
+separate reprojection check. The CAD dimensions are held fixed across views.
+
+```bash
+python src/model.py --out out
+python src/visual_validate.py --photos refs/photos --cad out --out out/visual
+```
+
+The report `out/visual/comparison.html` is self-contained and shows the
+photo, perspective CAD render, overlay, pixel differences and grid
+reprojection for each view. The output also includes a camera/pose JSON,
+full-frame photo masks, CAD part IDs (body including handle, pump, label and
+lettering), and optical-axis depth in millimeters. The renderer uses a CPU
+triangle rasterizer with perspective depth and flat shading.
+
+The supplied manifest assumes 10 mm per grid cell, square pixels, a centered
+principal point and zero lens distortion. Measure the mat's pitch and pass
+`--grid-pitch-mm <measured spacing>` to override the assumption. Pixel errors
+also depend on the visible bottom edge approximating the contact edge and on
+the photo segmentation. Use `--min-iou <threshold>` to gate each view after
+supplying the measured pitch. Missing photos and failed grid reprojection
+are validation errors.
+
+The push/PR workflow checks CAD outputs and tests the perspective math with
+synthetic data. The separate **Visual Validation** workflow runs on demand.
+Set the repository secret `CAD_PHOTOS_ZIP_URL` to an HTTPS URL for a private
+ZIP containing the three original JPEGs at its root, then dispatch the
+workflow with the measured grid pitch and desired minimum IoU. Only the
+numerical comparison JSON is uploaded to GitHub Actions, since the report
+contains the photos. Run locally to view the overlays.

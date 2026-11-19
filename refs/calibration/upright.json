@@ -1,0 +1,22 @@
+{
+  "image_size": [1152, 1536],
+  "grid_pitch_mm": 10,
+  "grid_pitch_measured": false,
+  "views": [
+    {"name": "front", "photo": "1000048543.jpg",
+     "grid_cells": [16, 20], "grid_seed_px": [[276, 241], [862, 231], [982, 949], [123, 938]],
+     "grid_exclude_px": [235, 105, 635, 697], "object_roi_px": [238, 105, 638, 614],
+     "base_edge": "-y", "base_edge_px": [[361, 609], [579, 610]],
+     "opening_roi_px": [477, 274, 582, 327], "pump_top_px": [317, 149]},
+    {"name": "rear", "photo": "1000048547.jpg",
+     "grid_cells": [16, 20], "grid_seed_px": [[260, 299], [889, 303], [1020, 1125], [114, 1100]],
+     "grid_exclude_px": [264, 238, 707, 843], "object_roi_px": [264, 245, 715, 793],
+     "base_edge": "+y", "base_edge_px": [[400, 744], [624, 743]],
+     "opening_roi_px": [353, 443, 457, 471], "pump_top_px": [608, 315]},
+    {"name": "side", "photo": "1000048548.jpg",
+     "grid_cells": [17, 20], "grid_seed_px": [[265, 320], [886, 324], [1021, 1075], [155, 1049]],
+     "grid_exclude_px": [355, 238, 593, 876], "object_roi_px": [368, 244, 601, 803],
+     "base_edge": "-x", "base_edge_px": [[439, 765], [544, 760]],
+     "pump_top_px": [458, 397]}
+  ]
+}

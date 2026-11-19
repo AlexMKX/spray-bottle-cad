@@ -1,0 +1,46 @@
+name: Visual Validation
+on:
+  workflow_dispatch:
+    inputs:
+      grid_pitch_mm:
+        description: Measured spacing between adjacent grid lines in mm
+        required: true
+        type: number
+      min_iou:
+        description: Minimum silhouette IoU in every view (0–1)
+        required: true
+        type: number
+permissions:
+  contents: read
+jobs:
+  perspective:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-dejavu-core
+          python -m pip install -r requirements.txt
+      - name: Fetch private reference ZIP
+        env:
+          CAD_PHOTOS_ZIP_URL: ${{ secrets.CAD_PHOTOS_ZIP_URL }}
+        run: python scripts/fetch_reference_photos.py
+      - name: Build and compare against original photographs
+        env:
+          GRID_PITCH_MM: ${{ inputs.grid_pitch_mm }}
+          MIN_IOU: ${{ inputs.min_iou }}
+        run: |
+          python src/model.py
+          python src/visual_validate.py --grid-pitch-mm "$GRID_PITCH_MM" --min-iou "$MIN_IOU"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perspective-metrics
+          path: out/visual/comparison.json
+          if-no-files-found: ignore
